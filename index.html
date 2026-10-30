@@ -1,0 +1,389 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Painel WFM Operação</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
+<style>
+  /* ==== Cores (claro / escuro) ==== */
+  :root {
+    color-scheme: light;
+    --page: #f9f9f7; --surface: #fcfcfb; --border: rgba(11,11,11,0.10);
+    --text: #0b0b0b; --text-2: #52514e; --muted: #898781;
+    --grid: #e1e0d9; --axis: #c3c2b7;
+    --s1: #2a78d6; --s2: #eb6834; --s3: #1baf7a;
+    --good: #0ca30c; --good-text: #006300; --warning: #fab219; --critical: #d03b3b;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      color-scheme: dark;
+      --page: #0d0d0d; --surface: #1a1a19; --border: rgba(255,255,255,0.10);
+      --text: #f0efec; --text-2: #c3c2b7; --muted: #898781;
+      --grid: #2c2c2a; --axis: #383835;
+      --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+      --good-text: #0ca30c;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark;
+    --page: #0d0d0d; --surface: #1a1a19; --border: rgba(255,255,255,0.10);
+    --text: #f0efec; --text-2: #c3c2b7; --muted: #898781;
+    --grid: #2c2c2a; --axis: #383835;
+    --s1: #3987e5; --s2: #d95926; --s3: #199e70;
+    --good-text: #0ca30c;
+  }
+
+  * { box-sizing: border-box; }
+  [hidden] { display: none !important; }
+  body { margin: 0; background: var(--page); color: var(--text);
+         font: 14px/1.45 system-ui, -apple-system, "Segoe UI", sans-serif; }
+  .wrap { max-width: 1280px; margin: 0 auto; padding: 20px 16px 40px; }
+  header { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; justify-content: space-between; margin-bottom: 16px; }
+  h1 { font-size: 22px; margin: 0; }
+  .sub { color: var(--text-2); font-size: 13px; }
+  .status { color: var(--muted); font-size: 12px; }
+  button { font: inherit; cursor: pointer; border: 1px solid var(--border); background: var(--surface); color: var(--text);
+           border-radius: 8px; padding: 6px 12px; }
+  button:hover { border-color: var(--axis); }
+
+  .filtros { display: flex; flex-wrap: wrap; gap: 12px; align-items: flex-end; background: var(--surface);
+             border: 1px solid var(--border); border-radius: 12px; padding: 12px; margin-bottom: 16px; }
+  .filtros label { display: flex; flex-direction: column; gap: 4px; font-size: 12px; color: var(--text-2); }
+  select, input[type=date] { font: inherit; color: var(--text); background: var(--page); border: 1px solid var(--border);
+           border-radius: 8px; padding: 6px 8px; min-width: 140px; }
+
+  .kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 16px; }
+  .kpi { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; }
+  .kpi .rot { font-size: 12px; color: var(--text-2); }
+  .kpi .val { font-size: 26px; font-weight: 600; margin: 2px 0; }
+  .kpi .det { font-size: 12px; color: var(--muted); }
+  .tag { display: inline-flex; gap: 4px; align-items: center; font-size: 12px; color: var(--text-2); }
+  .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+
+  .grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
+  .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; min-width: 0; }
+  .card h2 { font-size: 14px; margin: 0 0 2px; }
+  .card p { margin: 0 0 8px; font-size: 12px; color: var(--muted); }
+  .chart { position: relative; height: 260px; }
+  .full { grid-column: 1 / -1; }
+  @media (max-width: 800px) { .grid { grid-template-columns: 1fr; } }
+
+  .tabela { overflow-x: auto; }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; font-variant-numeric: tabular-nums; }
+  th, td { padding: 8px 10px; border-bottom: 1px solid var(--grid); text-align: right; white-space: nowrap; }
+  th:first-child, td:first-child, th:nth-child(2), td:nth-child(2) { text-align: left; }
+  th { color: var(--text-2); font-weight: 600; }
+
+  .erro { background: var(--surface); border: 1px solid var(--critical); border-radius: 12px; padding: 14px; margin-bottom: 16px; display: none; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <div>
+      <h1>Painel WFM — Operação</h1>
+      <div class="sub" id="sub">Carregando dados…</div>
+    </div>
+    <div style="display:flex; gap:10px; align-items:center">
+      <span class="status" id="status"></span>
+      <button id="btnRecarregar" title="Busca os dados mais recentes da planilha">↻ Recarregar</button>
+    </div>
+  </header>
+
+  <div class="erro" id="erro"></div>
+
+  <section class="filtros">
+    <label>Período
+      <select id="fPeriodo">
+        <option value="7">Últimos 7 dias</option>
+        <option value="30" selected>Últimos 30 dias</option>
+        <option value="90">Últimos 90 dias</option>
+        <option value="mes">Mês atual</option>
+        <option value="tudo">Tudo</option>
+        <option value="custom">Personalizado…</option>
+      </select>
+    </label>
+    <label id="lDe" hidden>De <input type="date" id="fDe"></label>
+    <label id="lAte" hidden>Até <input type="date" id="fAte"></label>
+    <label>Canal <select id="fCanal"></select></label>
+    <label>Fila <select id="fFila"></select></label>
+  </section>
+
+  <section class="kpis" id="kpis"></section>
+
+  <section class="grid">
+    <div class="card full">
+      <h2>Volume previsto x recebido</h2>
+      <p>Chamadas/contatos por dia — mostra a aderência do forecast</p>
+      <div class="chart"><canvas id="cVolume"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Nível de serviço (%)</h2>
+      <p>Atendidas dentro do SLA ÷ recebidas · linha tracejada = meta</p>
+      <div class="chart"><canvas id="cNS"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Abandono (%)</h2>
+      <p>Abandonadas ÷ recebidas</p>
+      <div class="chart"><canvas id="cAband"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Headcount escalado x presente</h2>
+      <p>A diferença é o absenteísmo do dia</p>
+      <div class="chart"><canvas id="cHC"></canvas></div>
+    </div>
+    <div class="card">
+      <h2>Nível de serviço por fila (%)</h2>
+      <p>No período e filtros selecionados</p>
+      <div class="chart"><canvas id="cFila"></canvas></div>
+    </div>
+    <div class="card full">
+      <h2>Resumo por fila</h2>
+      <p>Mesmos filtros dos gráficos</p>
+      <div class="tabela"><table id="tabela"></table></div>
+    </div>
+  </section>
+</div>
+
+<script>
+/* =====================================================================
+   CONFIGURAÇÃO — o único trecho que você precisa editar
+   CSV_URL: cole aqui o link do Google Sheets publicado como CSV
+            (Arquivo > Compartilhar > Publicar na Web > CSV).
+            Deixe vazio ("") para usar o arquivo de exemplo dados/base_wfm.csv
+   ===================================================================== */
+const CSV_URL = "";
+const META_NS = 0.80;           // meta de nível de serviço
+const ATUALIZAR_A_CADA_MIN = 10; // recarrega sozinho enquanto a página estiver aberta
+
+/* ---------- utilidades ---------- */
+const $ = (id) => document.getElementById(id);
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const fmtInt = (n) => Math.round(n).toLocaleString("pt-BR");
+const fmtPct = (n, c = 1) => isFinite(n) ? (n * 100).toLocaleString("pt-BR", { minimumFractionDigits: c, maximumFractionDigits: c }) + "%" : "–";
+const fmtSeg = (s) => {
+  if (!isFinite(s)) return "–";
+  s = Math.round(s);
+  if (s >= 3600) return `${Math.floor(s / 3600)}h${String(Math.floor((s % 3600) / 60)).padStart(2, "0")}`;
+  return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, "0")}`;
+};
+const fmtDesvio = (n) => (Math.abs(n) < 0.0005 ? "" : n > 0 ? "+" : "") + fmtPct(Math.abs(n) < 0.0005 ? 0 : n);
+const fmtData = (iso) => iso.split("-").reverse().join("/");
+const fmtDia = (iso) => iso.slice(8, 10) + "/" + iso.slice(5, 7);
+
+// Aceita 2026-10-28 ou 28/10/2026 (Sheets em pt-BR publica assim)
+function lerData(v) {
+  v = String(v || "").trim();
+  let m = v.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  if (m) return `${m[1]}-${m[2]}-${m[3]}`;
+  m = v.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})/);
+  if (m) return `${m[3]}-${m[2].padStart(2, "0")}-${m[1].padStart(2, "0")}`;
+  return null;
+}
+// Aceita 1800, 1.800 (milhar pt-BR) e 12,5 (decimal pt-BR)
+function lerNum(v) {
+  v = String(v ?? "").trim();
+  if (/^-?\d{1,3}(\.\d{3})+(,\d+)?$/.test(v)) v = v.replace(/\./g, "");
+  return Number(v.replace(",", ".")) || 0;
+}
+
+/* ---------- carga dos dados ---------- */
+let dados = [];
+const graficos = {};
+
+async function carregar() {
+  $("status").textContent = "Atualizando…";
+  $("erro").style.display = "none";
+  try {
+    const base = CSV_URL || "dados/base_wfm.csv";
+    const url = base + (base.includes("?") ? "&" : "?") + "t=" + Date.now(); // evita cache
+    const resp = await fetch(url, { cache: "no-store" });
+    if (!resp.ok) throw new Error(`HTTP ${resp.status} ao buscar ${base}`);
+    const texto = await resp.text();
+    const { data } = Papa.parse(texto, { header: true, skipEmptyLines: true, transformHeader: (h) => h.trim().toLowerCase() });
+    dados = data.map((r) => ({
+      data: lerData(r.data), canal: (r.canal || "").trim(), fila: (r.fila || "").trim(),
+      prev: lerNum(r.volume_previsto), rec: lerNum(r.volume_recebido), atd: lerNum(r.volume_atendido),
+      abd: lerNum(r.volume_abandonado), sla: lerNum(r.atendidas_no_sla), tma: lerNum(r.tma_seg),
+      tme: lerNum(r.tme_seg), esc: lerNum(r.hc_escalado), pres: lerNum(r.hc_presente), log: lerNum(r.minutos_logados),
+    })).filter((r) => r.data);
+    if (!dados.length) throw new Error("O CSV foi lido, mas nenhuma linha tem uma data válida. Confira os nomes das colunas.");
+
+    montarFiltros();
+    const ultima = dados.reduce((m, r) => (r.data > m ? r.data : m), "");
+    $("sub").textContent = `${fmtInt(dados.length)} linhas · dados até ${fmtData(ultima)} · fonte: ${CSV_URL ? "Google Sheets" : "arquivo de exemplo"}`;
+    $("status").textContent = "Atualizado às " + new Date().toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit" });
+    desenhar();
+  } catch (e) {
+    $("status").textContent = "";
+    $("erro").style.display = "block";
+    $("erro").innerHTML = `<strong>Não foi possível carregar os dados.</strong><br>${e.message}<br>
+      <span class="status">Se abriu o arquivo com duplo clique (file://), o navegador bloqueia a leitura do CSV — use um servidor local ou o link do GitHub Pages.</span>`;
+  }
+}
+
+/* ---------- filtros ---------- */
+function preencher(sel, valores) {
+  const atual = sel.value;
+  sel.innerHTML = `<option value="">Todos</option>` + valores.map((v) => `<option>${v}</option>`).join("");
+  if (valores.includes(atual)) sel.value = atual;
+}
+function montarFiltros() {
+  preencher($("fCanal"), [...new Set(dados.map((r) => r.canal))].sort());
+  const canal = $("fCanal").value;
+  preencher($("fFila"), [...new Set(dados.filter((r) => !canal || r.canal === canal).map((r) => r.fila))].sort());
+}
+function intervalo() {
+  const datas = dados.map((r) => r.data).sort();
+  const fim = datas[datas.length - 1], ini = datas[0];
+  const p = $("fPeriodo").value;
+  if (p === "tudo") return [ini, fim];
+  if (p === "custom") return [$("fDe").value || ini, $("fAte").value || fim];
+  if (p === "mes") return [fim.slice(0, 8) + "01", fim];
+  const d = new Date(fim + "T00:00:00"); d.setDate(d.getDate() - (Number(p) - 1));
+  return [d.toISOString().slice(0, 10), fim];
+}
+function filtrados() {
+  const [de, ate] = intervalo();
+  const canal = $("fCanal").value, fila = $("fFila").value;
+  return dados.filter((r) => r.data >= de && r.data <= ate && (!canal || r.canal === canal) && (!fila || r.fila === fila));
+}
+
+/* ---------- métricas (sempre ponderadas, como no Power BI: soma/soma) ---------- */
+function somar(linhas) {
+  const t = { prev: 0, rec: 0, atd: 0, abd: 0, sla: 0, tmaP: 0, tmeP: 0, esc: 0, pres: 0, log: 0 };
+  for (const r of linhas) {
+    t.prev += r.prev; t.rec += r.rec; t.atd += r.atd; t.abd += r.abd; t.sla += r.sla;
+    t.tmaP += r.tma * r.atd; t.tmeP += r.tme * r.atd; t.esc += r.esc; t.pres += r.pres; t.log += r.log;
+  }
+  return {
+    ...t,
+    ns: t.sla / t.rec, aband: t.abd / t.rec, tma: t.tmaP / t.atd, tme: t.tmeP / t.atd,
+    abs: 1 - t.pres / t.esc, ocup: (t.tmaP / 60) / t.log, desvio: t.rec / t.prev - 1,
+  };
+}
+function agrupar(linhas, chave) {
+  const m = new Map();
+  for (const r of linhas) { const k = chave(r); if (!m.has(k)) m.set(k, []); m.get(k).push(r); }
+  return [...m.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1)).map(([k, v]) => ({ k, ...somar(v) }));
+}
+
+/* ---------- desenho ---------- */
+function kpi(rot, val, det) { return `<div class="kpi"><div class="rot">${rot}</div><div class="val">${val}</div><div class="det">${det}</div></div>`; }
+function statusNS(ns) {
+  const ok = ns >= META_NS;
+  return `<span class="tag"><span class="dot" style="background:var(${ok ? "--good" : "--critical"})"></span>${ok ? "na meta" : "abaixo da meta"} (${fmtPct(META_NS, 0)})</span>`;
+}
+
+function desenhar() {
+  const linhas = filtrados();
+  if (!linhas.length) { $("kpis").innerHTML = kpi("Sem dados", "–", "Nenhuma linha para os filtros escolhidos"); return; }
+  const t = somar(linhas);
+  $("kpis").innerHTML =
+    kpi("Volume recebido", fmtInt(t.rec), `previsto ${fmtInt(t.prev)} · desvio ${fmtDesvio(t.desvio)}`) +
+    kpi("Nível de serviço", fmtPct(t.ns), statusNS(t.ns)) +
+    kpi("Abandono", fmtPct(t.aband), `${fmtInt(t.abd)} contatos abandonados`) +
+    kpi("TMA", fmtSeg(t.tma), "tempo médio de atendimento (min:seg)") +
+    kpi("TME", fmtSeg(t.tme), "tempo médio de espera (min:seg)") +
+    kpi("Absenteísmo", fmtPct(t.abs), `${fmtInt(t.pres)} presentes de ${fmtInt(t.esc)} escalados`) +
+    kpi("Ocupação", fmtPct(t.ocup), "tempo em atendimento ÷ tempo logado");
+
+  const dias = agrupar(linhas, (r) => r.data);
+  const rot = dias.map((d) => fmtDia(d.k));
+
+  linha("cVolume", rot, [
+    { label: "Recebido", data: dias.map((d) => d.rec), cor: "--s1" },
+    { label: "Previsto", data: dias.map((d) => d.prev), cor: "--muted", tracejado: true },
+  ], (v) => fmtInt(v));
+  linha("cNS", rot, [
+    { label: "Nível de serviço", data: dias.map((d) => d.ns * 100), cor: "--s1" },
+    { label: "Meta", data: dias.map(() => META_NS * 100), cor: "--critical", tracejado: true, semPonto: true },
+  ], (v) => v.toFixed(1) + "%", { min: 0, max: 100 });
+  linha("cAband", rot, [
+    { label: "Abandono", data: dias.map((d) => d.aband * 100), cor: "--s2" },
+  ], (v) => v.toFixed(1) + "%", { min: 0 });
+  linha("cHC", rot, [
+    { label: "Escalado", data: dias.map((d) => d.esc), cor: "--s1" },
+    { label: "Presente", data: dias.map((d) => d.pres), cor: "--s3" },
+  ], (v) => fmtInt(v), { min: 0 });
+
+  const filas = agrupar(linhas, (r) => `${r.canal} · ${r.fila}`).sort((a, b) => b.ns - a.ns);
+  barras("cFila", filas.map((f) => f.k), filas.map((f) => f.ns * 100));
+
+  $("tabela").innerHTML =
+    `<thead><tr><th>Canal</th><th>Fila</th><th>Previsto</th><th>Recebido</th><th>Desvio</th><th>NS</th><th>Abandono</th><th>TMA</th><th>TME</th><th>Absenteísmo</th><th>Ocupação</th></tr></thead><tbody>` +
+    agrupar(linhas, (r) => r.canal + "|" + r.fila).map((f) => {
+      const [c, fi] = f.k.split("|");
+      return `<tr><td>${c}</td><td>${fi}</td><td>${fmtInt(f.prev)}</td><td>${fmtInt(f.rec)}</td><td>${fmtDesvio(f.desvio)}</td>
+        <td>${fmtPct(f.ns)}</td><td>${fmtPct(f.aband)}</td><td>${fmtSeg(f.tma)}</td><td>${fmtSeg(f.tme)}</td><td>${fmtPct(f.abs)}</td><td>${fmtPct(f.ocup)}</td></tr>`;
+    }).join("") +
+    `<tr style="font-weight:600"><td>Total</td><td></td><td>${fmtInt(t.prev)}</td><td>${fmtInt(t.rec)}</td><td>${fmtDesvio(t.desvio)}</td>
+      <td>${fmtPct(t.ns)}</td><td>${fmtPct(t.aband)}</td><td>${fmtSeg(t.tma)}</td><td>${fmtSeg(t.tme)}</td><td>${fmtPct(t.abs)}</td><td>${fmtPct(t.ocup)}</td></tr></tbody>`;
+}
+
+/* ---------- Chart.js ---------- */
+function eixos(fmt, y = {}) {
+  return {
+    x: { grid: { display: false }, border: { color: css("--axis") }, ticks: { color: css("--muted"), maxRotation: 0, autoSkipPadding: 12 } },
+    y: { ...y, grid: { color: css("--grid") }, border: { display: false }, ticks: { color: css("--muted"), callback: fmt } },
+  };
+}
+function opcoesBase(fmt) {
+  return {
+    responsive: true, maintainAspectRatio: false, animation: false,
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { position: "top", align: "start", labels: { color: css("--text-2"), boxWidth: 10, boxHeight: 10, usePointStyle: true } },
+      tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${fmt(c.parsed.y ?? c.parsed.x)}` } },
+    },
+  };
+}
+function linha(id, labels, series, fmt, y) {
+  graficos[id]?.destroy();
+  const opts = opcoesBase(fmt);
+  if (series.length === 1) opts.plugins.legend.display = false;
+  graficos[id] = new Chart($(id), {
+    type: "line",
+    data: {
+      labels,
+      datasets: series.map((s) => ({
+        label: s.label, data: s.data, borderColor: css(s.cor), backgroundColor: css(s.cor),
+        borderWidth: 2, borderDash: s.tracejado ? [5, 4] : [], pointRadius: 0,
+        pointHoverRadius: s.semPonto ? 0 : 5, pointHitRadius: 12, tension: 0.25,
+      })),
+    },
+    options: { ...opts, scales: eixos(fmt, y) },
+  });
+}
+function barras(id, labels, valores) {
+  graficos[id]?.destroy();
+  const fmt = (v) => v.toFixed(1) + "%";
+  const opts = opcoesBase(fmt);
+  opts.plugins.legend.display = false;
+  opts.interaction = { mode: "nearest", axis: "y", intersect: false };
+  const sc = eixos(fmt, { min: 0, max: 100 });
+  graficos[id] = new Chart($(id), {
+    type: "bar",
+    data: { labels, datasets: [{ label: "Nível de serviço", data: valores, backgroundColor: css("--s1"), borderRadius: 4, barPercentage: 0.7 }] },
+    options: { ...opts, indexAxis: "y", scales: { x: { ...sc.y, ticks: { ...sc.y.ticks } }, y: { ...sc.x, ticks: { color: css("--text-2") } } } },
+  });
+}
+
+/* ---------- eventos ---------- */
+$("fPeriodo").addEventListener("change", () => {
+  const c = $("fPeriodo").value === "custom";
+  $("lDe").hidden = $("lAte").hidden = !c;
+  desenhar();
+});
+["fDe", "fAte", "fFila"].forEach((id) => $(id).addEventListener("change", desenhar));
+$("fCanal").addEventListener("change", () => { $("fFila").value = ""; montarFiltros(); desenhar(); });
+$("btnRecarregar").addEventListener("click", carregar);
+window.matchMedia("(prefers-color-scheme: dark)").addEventListener("change", () => dados.length && desenhar());
+setInterval(carregar, ATUALIZAR_A_CADA_MIN * 60 * 1000);
+
+carregar();
+</script>
+</body>
+</html>
